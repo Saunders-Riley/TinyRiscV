@@ -3,40 +3,40 @@
 
 module tinyriscv_cpu_decode_unit (
     // Core signals
-    input   wire        cpu_clk,
-    input   wire        cpu_resetn,
-    input   wire        pipe_stall_in,
-    input   wire        pipe_flush_in,
+    input   logic       cpu_clk,
+    input   logic       cpu_resetn,
+    input   logic       pipe_stall_in,
+    input   logic       pipe_flush_in,
     // Upstream instruction interface
-    input   wire[31:0]  fetch_pcaddr_in,
-    input   wire[31:0]  fetch_instr_in,
-    input   wire        fetch_spec_in,
+    input   logic[31:0] fetch_pcaddr_in,
+    input   logic[31:0] fetch_instr_in,
+    input   logic       fetch_spec_in,
     // Downstream instruction interface
-    output  reg[31:0]   dec_pcaddr_out,
-    output  reg[31:0]   dec_instr_out,
-    output  reg[31:0]   dec_op1_out,
-    output  reg[31:0]   dec_op2_out,
-    output  reg[31:0]   dec_op3_out,
-    output  reg         dec_spec_out,
+    output  logic[31:0] dec_pcaddr_out,
+    output  logic[31:0] dec_instr_out,
+    output  logic       dec_spec_out,
+    output  logic[31:0] dec_op1_out,
+    output  logic[31:0] dec_op2_out,
+    output  logic[31:0] dec_op3_out,
     // Sideband interface - execution stage
-    input   wire[31:0]  exec_instr_in,
-    input   wire[31:0]  exec_res_in,
-    input   wire[31:0]  exec_byp_in,
+    input   logic[31:0] exec_instr_in,
+    input   logic[31:0] exec_res_in,
+    input   logic[31:0] exec_byp_in,
     // Sideband interface - memory stage
-    input   wire[31:0]  mem_instr_in,
-    input   wire[31:0]  mem_res_in,
-    input   wire[31:0]  mem_byp_in,
+    input   logic[31:0] mem_instr_in,
+    input   logic[31:0] mem_res_in,
+    input   logic[31:0] mem_byp_in,
     // Writeback interface
-    input   wire[11:0]  wb_rd1_sel,
-    input   wire[31:0]  wb_rd1_data,
-    input   wire        wb_rd1_wren,
-    input   wire[4:0]   wb_rd2_sel,
-    input   wire[31:0]  wb_rd2_data,
-    input   wire        wb_rd2_wren,
+    input   logic[11:0] wb_rd1_sel,
+    input   logic[31:0] wb_rd1_data,
+    input   logic       wb_rd1_wren,
+    input   logic[4:0]  wb_rd2_sel,
+    input   logic[31:0] wb_rd2_data,
+    input   logic       wb_rd2_wren,
 );
 
     wire[31:0]      pl_fetch_instr      = fetch_instr_in;
-    wire[31:0]      pl_fetch_pcaddr     = fetch_spec_in;
+    wire[31:0]      pl_fetch_pcaddr     = fetch_pcaddr_in;
     wire[6:0]       pl_fetch_funct7     = pl_fetch_instr[31:25];
     wire[4:0]       pl_fetch_rs2        = pl_fetch_instr[24:20];
     wire[4:0]       pl_fetch_rs1        = pl_fetch_instr[19:15];
@@ -63,15 +63,19 @@ module tinyriscv_cpu_decode_unit (
     wire            fwd_op2_wb_rd1      = ((rd1_sel[11:5] == 7'h00) && rd1_sel[4:0] == pl_fetch_rs2) ? wb_rd1_wren : 0;
     wire            fwd_op2_wb_rd2      = (rd2_sel == pl_fetch_rs2) ? wb_rd2_wren : 0;
 
-    always @(posedge cpu_clk, negedge cpu_resetn) begin
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_decode_unit_pl
         if(cpu_resetn) begin
             if(pipe_flush_in) begin
                 dec_pcaddr_out  <= 32'h0000_0000;
                 dec_instr_out   <= `RISCV_RV32I_INSTR_NOP;
+                dec_spec_out    <= 0;
                 dec_op1_out     <= 32'h0000_0000;
                 dec_op2_out     <= 32'h0000_0000;
                 dec_op3_out     <= 32'h0000_0000;
             end else if(~pipe_stall_in) begin
+                dec_pcaddr_out  <= fetch_pcaddr_in;
+                dec_instr_out   <= fetch_instr_in;
+                dec_spec_out    <= fetch_spec_in;
                 case(pl_fetch_opcode)
                 // Arithmetic operations
                 // op1 - arithmetic operand 1
@@ -187,16 +191,23 @@ module tinyriscv_cpu_decode_unit (
                     dec_op3_out     <=  32'h0000_0000;
                 end
                 `RISCV_RV32I_OPCODE_SYSTEM:     begin
-// TODO - implement system instructions
+                // TODO - implement system instructions
                 end
                 default:
-// TODO - implement bad instruction exception
+                // TODO - implement bad instruction exception
                 endcase
             end
+        end else begin
+            dec_pcaddr_out  <= 32'h0000_0000;
+            dec_instr_out   <= `RISCV_RV32I_INSTR_NOP;
+            dec_spec_out    <= 0;
+            dec_op1_out     <= 32'h0000_0000;
+            dec_op2_out     <= 32'h0000_0000;
+            dec_op3_out     <= 32'h0000_0000;
         end
     end
 
-    tinyriscv_cpu_register_file inst_tinyriscv_cpu_register_file(
+    tinyriscv_cpu_register_file inst_tinyriscv_cpu_register_file (
         .cpu_clk    ( cpu_clk ),
         .cpu_resetn ( cpu_resetn ),
         .rs1_sel    ( pl_fetch_rs1 ),
@@ -215,48 +226,48 @@ endmodule
 
 module tinyriscv_cpu_register_file (
     // Core signals
-    input   wire        cpu_clk,
-    input   wire        cpu_resetn,
+    input   logic       cpu_clk,
+    input   logic       cpu_resetn,
     // Read-side interface
-    input   wire[11:0]  rs1_sel,
-    output  reg[31:0]   rs1_data,
-    input   wire[11:0]  rs2_sel,
-    output  reg[31:0]   rs2_data,
+    input   logic[11:0] rs1_sel,
+    output  logic[31:0] rs1_data,
+    input   logic[11:0] rs2_sel,
+    output  logic[31:0] rs2_data,
     // Write-side interface
-    input   wire[11:0]  rd1_sel,
-    input   wire[31:0]  rd1_data,
-    input   wire        rd1_wren,
-    input   wire[4:0]   rd2_sel,
-    input   wire[31:0]  rd2_data,
-    input   wire        rd2_wren
+    input   logic[11:0] rd1_sel,
+    input   logic[31:0] rd1_data,
+    input   logic       rd1_wren,
+    input   logic[4:0]  rd2_sel,
+    input   logic[31:0] rd2_data,
+    input   logic       rd2_wren
 );
     integer i;
-    reg[31:0]   core_registers[31:0]        ///< page 0x000 - core registers
+    logic[31:0]   core_registers[31:0]        ///< page 0x000 - core registers
 
     // Source Register 1 read
-    always @(*) begin
+    always_comb begin : proc_tinyriscv_cpu_register_file_rs1_read
         case(rs1_sel[11:5])
-// TODO - system register pages
-            7'h00:      rs1_data <= core_registers[rs1_sel[4:0]];
-            default:    rs1_data <= 32'h0000_0000;
+            // TODO - system register pages
+            7'h00:      rs1_data = core_registers[rs1_sel[4:0]];
+            default:    rs1_data = 32'h0000_0000;
         endcase
     end
 
     // Source Register 2 read
-    always @(*) begin
+    always_comb begin : proc_tinyriscv_cpu_register_file_rs2_read
         case(rs2_sel[11:5])
-// TODO - system register pages
-            7'h00:      rs2_data <= core_registers[rs2_sel[4:0]];
-            default:    rs2_data <= 32'h0000_0000;
+            // TODO - system register pages
+            7'h00:      rs2_data = core_registers[rs2_sel[4:0]];
+            default:    rs2_data = 32'h0000_0000;
         endcase
     end
 
-    // Destination Register 1 write
-    always @(posedge clk, negedge cpu_resetn) begin
+    // Destination Register writes
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_register_file_write
         if(cpu_resetn) begin
             if(rd1_wren) begin
                 case(rd1_sel[11:5])
-// TODO - system register pages
+                    // TODO - system register pages
                     7'h00:  core_registers[rd1_sel[4:0]] <= rd1_data;
                     default:    // do nothing
                 endcase

@@ -2,36 +2,36 @@
 `include "riscv_instruction_set.vh"
 
 module tinyriscv_cpu_fetch_unit #(
-    parameter RESET_VECTOR = `TINYRISCV_RESET_VECTOR;
+    parameter RESET_VECTOR = `TINYRISCV_RESET_VECTOR,
 ) (
     // Core signals
-    input   wire        cpu_clk,                ///< CPU clock
-    input   wire        cpu_resetn,             ///< CPU reset, async, active LOW
+    input   logic       cpu_clk,                ///< CPU clock
+    input   logic       cpu_resetn,             ///< CPU reset, async, active LOW
     // AHB instruction memory interface
-    input   wire        imem_m_ahb_hready,
-    input   wire        imem_m_ahb_hresp,
-    output  reg[31:0]   imem_m_ahb_haddr,
-    output  wire        imem_m_ahb_hwrite,
-    output  wire[3:0]   imem_m_ahb_hwstrb,
-    output  reg[1:0]    imem_m_ahb_htrans,
-    output  reg[2:0]    imem_m_ahb_hsize,
-    output  reg[2:0]    imem_m_ahb_hburst,
-    output  wire[3:0]   imem_m_ahb_hprot,
-    output  wire        imem_m_ahb_hmastlock,
-    output  wire[31:0]  imem_m_ahb_hwdata,
-    input   wire[31:0]  imem_m_ahb_hrdata,
+    input   logic       imem_m_ahb_hready,
+    input   logic       imem_m_ahb_hresp,
+    output  logic[31:0] imem_m_ahb_haddr,
+    output  wire       imem_m_ahb_hwrite,
+    output  wire[3:0]  imem_m_ahb_hwstrb,
+    output  logic[1:0]  imem_m_ahb_htrans,
+    output  logic[2:0]  imem_m_ahb_hsize,
+    output  logic[2:0]  imem_m_ahb_hburst,
+    output  wire[3:0]  imem_m_ahb_hprot,
+    output  wire       imem_m_ahb_hmastlock,
+    output  logic[31:0] imem_m_ahb_hwdata,
+    input   logic[31:0] imem_m_ahb_hrdata,
     // Downstream instruction interface
-    output  reg[31:0]   fetch_pcaddr_out,       ///< Fetch instruction program counter
-    output  reg[31:0]   fetch_instr_out,        ///< Fetch instruction word
-    output  reg         fetch_spec_out,         ///< Speculative execution flag
-    output  wire        fetch_stall,            ///< Pipeline stall output
-    output  wire        fetch_flush,            ///< Pipeline flush output
+    output  logic[31:0] fetch_pcaddr_out,       ///< Fetch instruction program counter
+    output  logic[31:0] fetch_instr_out,        ///< Fetch instruction word
+    output  logic       fetch_spec_out,         ///< Speculative execution flag
+    output  wire       fetch_stall,            ///< Pipeline stall output
+    output  wire       fetch_flush,            ///< Pipeline flush output
     // Branch resolution interface
-    input   wire        branch_jump,            ///< Unconditional Jump flag, asserts for JALR downstream, forces fetch_flush
-    input   wire[1:0]   branch_res,             ///< Branch result flags, if branch_res[1] != branch_res[0], mispredicted, forces fetch_flush
-    input   wire        branch_upd,             ///< Branch update flag, asserts for BRANCH downstream, updates predictor table
-    input   wire[31:0]  branch_addr,            ///< Branch pcaddr - address of the branch/jump instruction
-    input   wire[31:0]  branch_jump_pcaddr      ///< Branch/Jump pcaddr - address to set prog_counter to
+    input   logic       branch_jump,            ///< Unconditional Jump flag, asserts for JALR downstream, forces fetch_flush
+    input   logic[1:0]  branch_res,             ///< Branch result flags, if branch_res[1] != branch_res[0], mispredicted, forces fetch_flush
+    input   logic       branch_upd,             ///< Branch update flag, asserts for BRANCH downstream, updates predictor table
+    input   logic[31:0] branch_addr,            ///< Branch pcaddr - address of the branch/jump instruction
+    input   logic[31:0] branch_jump_pcaddr      ///< Branch/Jump pcaddr - address to set prog_counter to
 );
     // Static assignments
     assign  imem_m_ahb_hwrite = 1'b0;
@@ -43,17 +43,17 @@ module tinyriscv_cpu_fetch_unit #(
     assign  fetch_stall = ~imem_m_ahb_hready; // cache wait states will force a pipeline stall, might want to rework this later on
 
     // Internal signals
-    reg[31:0]   prog_counter;
-    reg[31:0]   prog_counter_pl[1:0];
-    reg[31:0]   fetch_instr_pl;
+    logic[31:0]   prog_counter;
+    logic[31:0]   prog_counter_pl[1:0];
+    logic[31:0]   fetch_instr_pl;
     wire[19:0]  fetch_instr_pl_imm_U = fetch_instr_pl[31:12];
     wire[31:0]  fetch_instr_pl_imm_J = {fetch_instr_pl_imm_U[19] ? 11'h7FF : 11'h000, fetch_instr_pl_imm_U[19], fetch_instr_pl_imm_U[7:0], fetch_instr_pl_imm_U[8], fetch_instr_pl_imm_U[18:9], 1'b0};
     wire[12:0]  fetch_instr_pl_imm_B = {fetch_instr_pl[31], fetch_instr_pl[7], fet_instr_pl[30:25], fetch_instr_pl[11:8], 1'b0};
-    reg[31:0]   fetch_pcaddr_pl;
-    reg[2:0]    fetch_instr_invalidate;
+    logic[31:0]   fetch_pcaddr_pl;
+    logic[2:0]    fetch_instr_invalidate;
     
     // AHB address phase controls
-    always @(posedge cpu_clk, negedge cpu_resetn) begin
+    always_ff @( posdege cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_ahb_addr
         if (cpu_resetn) begin
             // Drive the program counter address out onto the instruction memory bus
             // Transactions are always 32-bit, non-sequential, non-bursting operations
@@ -70,7 +70,7 @@ module tinyriscv_cpu_fetch_unit #(
     end
 
     // Program counter pipeline
-    always @(posedge cpu_clk, negedge cpu_resetn) begin
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_prog_counter_pl
         if (cpu_resetn) begin
             if (imem_m_ahb_hready) begin
                 // Pipeline registers are inserted to synchronize the program counter
@@ -88,7 +88,7 @@ module tinyriscv_cpu_fetch_unit #(
     end
 
     // Instruction fetch pipeline
-    always @(posedge cpu_clk, negedge cpu_resetn) begin
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_instr_fetch
         if (cpu_resetn) begin
             if (imem_m_ahb_hready) begin
                 // A Pipeline register was added here to allow for branch prediction
@@ -105,7 +105,7 @@ module tinyriscv_cpu_fetch_unit #(
     end
 
     // Program counter logic
-    always @(posedge cpu_clk, negedge resetn) begin
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_prog_counter
         if (cpu_resetn) begin
             if(imem_m_ahb_hready) begin
                 if (fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_JAL) begin
@@ -156,9 +156,9 @@ module tinyriscv_cpu_fetch_branch_predictor #(
     input   wire        branch_upd_res
 );
     // Internal Signals
-    reg[31:0]   predict_addr_table[BRANCH_DEPTH-1:0];
-    reg[1:0]    predict_res_table[BRANCH_DEPTH-1:0];
-    reg         predict_res_int;
+    logic[31:0]   predict_addr_table[BRANCH_DEPTH-1:0];
+    logic[1:0]    predict_res_table[BRANCH_DEPTH-1:0];
+    logic         predict_res_int;
     wire[BRANCH_DEPTH-1:0]  predict_addr_match;
     wire[BRANCH_DEPTH-1:0]  update_addr_match;
 
@@ -171,14 +171,14 @@ module tinyriscv_cpu_fetch_branch_predictor #(
     assign predict_res = (|predict_addr_match) predict_res_int : 0;
 
     // Predictor Read logic
-    always @(*) begin
+    always_comb begin : proc_tinyriscv_cpu_fetch_branch_predictor_read
         for(i = 0; i < BRANCH_DEPTH; i = i + 1) begin
             if(predict_addr_match[i]) predict_res_int = (predict_res_table[i] > 2'b01) ? 1 : 0;
         end
     end
 
     // Predictor Update logic
-    always @(posedge clk) begin
+    always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_branch_predictor_write
         if(cpu_resetn) begin
             if(branch_upd && |update_addr_match) begin
                 for(i = 0; i < BRANCH_DEPTH; i = i + 1) begin
