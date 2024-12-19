@@ -23,7 +23,7 @@ module tinyriscv_cpu_fetch_unit #(
     // Downstream instruction interface
     output  reg[31:0]   fetch_pcaddr_out,       ///< Fetch instruction program counter
     output  reg[31:0]   fetch_instr_out,        ///< Fetch instruction word
-    output  reg         fetch_spec,             ///< Speculative execution flag
+    output  reg         fetch_spec_out,         ///< Speculative execution flag
     output  wire        fetch_stall,            ///< Pipeline stall output
     output  wire        fetch_flush,            ///< Pipeline flush output
     // Branch resolution interface
@@ -113,8 +113,10 @@ module tinyriscv_cpu_fetch_unit #(
                     // counter address can be calculated and set here. fetch_instr_invalidate
                     // is set to invalidate the next 3 instructions to let the upstream catch up.
                     prog_counter <= fetch_pcaddr_pl + fetch_instr_pl_imm_J;
-                    fetch_spec <= 0;
-                    fetch_instr_invalidate <= 3'h7;
+                    fetch_spec_out <= 0;
+                    // fetch_instr_invalidate is set to 6 here to let the JAL into the pipeline.
+                    // This is so the link address makes it to rd properly.
+                    fetch_instr_invalidate <= 3'h6;
                 end
                 else if(fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_BRANCH && predict_res == 1) begin
                     // For branches, if the branch is predicted to be taken, the same thing as
@@ -122,13 +124,13 @@ module tinyriscv_cpu_fetch_unit #(
                     // to mark that this was a branch instruction and all following instructions
                     // are being speculatively executed until it is resolved.
                     prog_counter <= fetch_pcaddr_pl + fetch_instr_pl_imm_B;
-                    fetch_spec <= 1;
+                    fetch_spec_out <= 1;
                     fetch_instr_invalidate <= 3'h7;
                 end else begin
                     // In the normal case, the program counter increments to the next word, the
                     // invalidate bits shift right, and the speculative flag is set low.
                     prog_counter <= prog_counter + 4;
-                    fetch_spec <= 0;
+                    fetch_spec_out <= 0;
                     fetch_instr_invalidate <= fetch_instr_invalidate >> 1;
                 end
             end
