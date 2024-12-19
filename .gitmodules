@@ -1,0 +1,3 @@
+[submodule "libfpga"]
+	path = libfpga
+	url = git@github.com:Wren6991/libfpga.git
