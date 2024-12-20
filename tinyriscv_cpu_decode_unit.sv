@@ -10,11 +10,11 @@ module tinyriscv_cpu_decode_unit (
     // Upstream instruction interface
     input   logic[31:0] fetch_pcaddr_in,
     input   logic[31:0] fetch_instr_in,
-    input   logic       fetch_spec_in,
+    input   logic[1:0]  fetch_spec_in,
     // Downstream instruction interface
     output  logic[31:0] dec_pcaddr_out,
     output  logic[31:0] dec_instr_out,
-    output  logic       dec_spec_out,
+    output  logic[1:0]  dec_spec_out,
     output  logic[31:0] dec_op1_out,
     output  logic[31:0] dec_op2_out,
     output  logic[31:0] dec_op3_out,
@@ -68,7 +68,7 @@ module tinyriscv_cpu_decode_unit (
             if(pipe_flush_in) begin
                 dec_pcaddr_out  <= 32'h0000_0000;
                 dec_instr_out   <= `RISCV_RV32I_INSTR_NOP;
-                dec_spec_out    <= 0;
+                dec_spec_out    <= 2'b00;
                 dec_op1_out     <= 32'h0000_0000;
                 dec_op2_out     <= 32'h0000_0000;
                 dec_op3_out     <= 32'h0000_0000;
@@ -200,7 +200,7 @@ module tinyriscv_cpu_decode_unit (
         end else begin
             dec_pcaddr_out  <= 32'h0000_0000;
             dec_instr_out   <= `RISCV_RV32I_INSTR_NOP;
-            dec_spec_out    <= 0;
+            dec_spec_out    <= 2'b00;
             dec_op1_out     <= 32'h0000_0000;
             dec_op2_out     <= 32'h0000_0000;
             dec_op3_out     <= 32'h0000_0000;

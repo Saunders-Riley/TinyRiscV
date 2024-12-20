@@ -13,13 +13,19 @@ module tinyriscv_cpu_exec_unit (
     input   logic[31:0] dec_op1_in,
     input   logic[31:0] dec_op2_in,
     input   logic[31:0] dec_op3_in,
-    input   logic       dec_spec_in,
+    input   logic[1:0]  dec_spec_in,
     // Downstream instruction interface
     output  logic[31:0] exec_pcaddr_out,
     output  logic[31:0] exec_instr_out,
-    output  logic       exec_spec_out,
     output  logic[31:0] exec_res_out,
     output  logic[31:0] exec_byp_out,
+    // Branch resolution interface
+    output  logic       pipe_flush_out,
+    output  logic       branch_jump,
+    output  logic[31:0] branch_jump_pcaddr,
+    output  logic       branch_upd,
+    output  logic[31:0] branch_upd_pcaddr,
+    output  logic       branch_upd_res
 );
 
     wire[31:0]      pl_dec_instr      = dec_instr_in;
@@ -44,22 +50,84 @@ module tinyriscv_cpu_exec_unit (
             if (pipe_flush) begin
                 exec_pcaddr_out     <= 32'h0000_0000;
                 exec_instr_out      <= `RISCV_RV32I_INSTR_NOP;
-                exec_spec_out       <= 0;
                 exec_res_out        <= 32'h0000_0000;
                 exec_byp_out        <= 32'h0000_0000;
             end else begin
                 if (~pipe_stall) begin
-                    exec_pcaddr_out     <= dec_pcaddr_in;
-                    exec_instr_out      <= dec_instr_in;
-                    exec_spec_out       <= dec_spec_in;
-                    exec_res_out        <= alu_result;
-                    exec_byp_out        <= alu_bypass;
+                    case (pl_dec_opcode)
+                        `RISCV_RV32I_OPCODE_BRANCH : begin
+                            // In a branch instruction, there are two possible cases:
+                            if(dec_spec_in[0] != alu_result) begin
+                                // In the mis-predicted case, the pipeline needs to be flushed
+                                // and the branch predictor needs to be updated. Update the
+                                // program counter in the fetch unit to the branch target.
+                                // The instruction can be discarded here since no memory access
+                                // or writeback occurs.
+                                exec_pcaddr_out     <= 32'h0000_0000;
+                                exec_instr_out      <= `RISCV_RV32I_INSTR_NOP;
+                                exec_res_out        <= 32'h0000_0000;
+                                exec_byp_out        <= 32'h0000_0000;
+                                pipe_flush_out      <= 1;
+                                branch_jump         <= 1;
+                                branch_jump_pcaddr  <= dec_pcaddr_in + pl_dec_imm_B;
+                                branch_upd          <= 1;
+                                branch_upd_pcaddr   <= dec_pcaddr_in;
+                                branch_upd_res      <= alu_result[0];
+                            end else begin
+                                // In the correctly-predicted case, the pipeline can
+                                // keep running, while this updates the branch predictor
+                                // with the branch instruction in the background. The
+                                // instruction can be discarded here since no memory access
+                                // or writeback occurs.
+                                exec_pcaddr_out     <= 32'h0000_0000;
+                                exec_instr_out      <= `RISCV_RV32I_INSTR_NOP
+                                exec_res_out        <= 32'h0000_0000;
+                                exec_byp_out        <= 32'h0000_0000;
+                                pipe_flush_out      <= 0;
+                                branch_jump         <= 0;
+                                branch_jump_pcaddr  <= 32'h0000_0000;
+                                branch_upd          <= 1;
+                                branch_upd_pcaddr   <= dec_pcaddr_in;
+                                branch_upd_res      <= alu_result[0];
+                            end
+                        end
+                        `RISCV_RV32I_OPCODE_JAL_REG : begin
+                            // In the jump-and-link-register case, the upstream pipeline
+                            // needs to be flushed since those are after the jump, but
+                            // the instruction needs to continue into the writeback unit.
+                            // Update the program counter in the fetch unit and flush
+                            // the upstream pipeline.
+                            exec_pcaddr_out     <= dec_pcaddr_in;
+                            exec_instr_out      <= dec_instr_in;
+                            exec_res_out        <= alu_result;
+                            exec_byp_out        <= alu_bypass;
+                            pipe_flush_out      <= 1;
+                            branch_jump         <= 1;
+                            branch_jump_pcaddr  <= alu_result;
+                            branch_upd          <= 0;
+                            branch_upd_pcaddr   <= 32'h0000_0000;
+                            branch_upd_res      <= 0;
+                        end
+                        default: begin
+                            // For all other instructions, the pipeline keeps running
+                            // as normal. PC-relative jumps were handled in the fetch unit.
+                            exec_pcaddr_out     <= dec_pcaddr_in;
+                            exec_instr_out      <= dec_instr_in;
+                            exec_res_out        <= alu_result;
+                            exec_byp_out        <= alu_bypass;
+                            pipe_flush_out      <= 0;
+                            branch_jump         <= 0;
+                            branch_jump_pcaddr  <= 32'h0000_0000;
+                            branch_upd          <= 0;
+                            branch_upd_pcaddr   <= 32'h0000_0000;
+                            branch_upd_res      <= 0;
+                        end
+                    endcase
                 end
             end
         end else begin
             exec_pcaddr_out     <= 32'h0000_0000;
             exec_instr_out      <= `RISCV_RV32I_INSTR_NOP;
-            exec_spec_out       <= 0;
             exec_res_out        <= 32'h0000_0000;
             exec_byp_out        <= 32'h0000_0000;
         end
@@ -95,23 +163,19 @@ module tinyriscv_cpu_alu (
             // byp - (unused)
             `RISCV_RV32I_OPCODE_ARITH,
             `RISCV_RV32I_OPCODE_ARITH_IMM   : begin
+                byp = 32'h0000_0000;
                 case (funct3)
-                    `RISCV_RV32I_FUNCT3_ARITH_ADD   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_XOR   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_OR    : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_AND   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_LSH   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_RSH   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_SLT   : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_ARITH_SLTU  : begin
-                    end
+                    `RISCV_RV32I_FUNCT3_ARITH_ADD   : res = (funct7 == `RISCV_RV32I_FUNCT7_ARITH_SUB) ? op1 + (~op2 + 1) : op1 + op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_XOR   : res = op1 ^ op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_OR    : res = op1 | op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_AND   : res = op1 & op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_LSH   : res = op1 << op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_RSH   : res = (funct7 == `RISCV_RV32I_FUNCT7_ARITH_RSHA) ? op1 >>> op2 : op1 >> op2;
+                    `RISCV_RV32I_FUNCT3_ARITH_SLT   : res = (op1[31] == 1 && op2[31] == 0) ? 1 :
+                                                            (op1[31] == 0 && op2[31] == 1) ? 0 :
+                                                            (op1[31] == 1 && op2[31] == 1) ? ((op1[30:0] > op2[30:0]) ? 1 : 0) :
+                                                            ((op1[30:0] < op2[30:0]) ? 1 : 0);
+                    `RISCV_RV32I_FUNCT3_ARITH_SLTU  : res = (op1 < op2) ? 1 : 0;
                     default: 
                 endcase
             end
@@ -120,24 +184,27 @@ module tinyriscv_cpu_alu (
             // byp - store data (if applicable)
             `RISCV_RV32I_OPCODE_LOAD,
             `RISCV_RV32I_OPCODE_STORE       : begin
+                res = op1 + op2;
+                byp = op3;
             end
             // Branch operations
             // res - branch result
             // byp - branch offset
             `RISCV_RV32I_OPCODE_BRANCH      : begin
+                byp = op3;
                 case (funct3)
-                    `RISCV_RV32I_FUNCT3_BEQ         : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_BNE         : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_BLT         : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_BGE         : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_BLTU        : begin
-                    end
-                    `RISCV_RV32I_FUNCT3_BGEU        : begin
-                    end
+                    `RISCV_RV32I_FUNCT3_BEQ         : res = (op1 == op2) ? 1 : 0;
+                    `RISCV_RV32I_FUNCT3_BNE         : res = (op1 != op2) ? 1 : 0;
+                    `RISCV_RV32I_FUNCT3_BLT         : res = (op1[31] == 1 && op2[31] == 0) ? 1 :
+                                                            (op1[31] == 0 && op2[31] == 1) ? 0 :
+                                                            (op1[31] == 1 && op2[31] == 1) ? ((op1[30:0] > op2[30:0]) ? 1 : 0) :
+                                                            ((op1[30:0] < op2[30:0]) ? 1 : 0);
+                    `RISCV_RV32I_FUNCT3_BGE         : res = (op1[31] == 1 && op2[31] == 0) ? 0 :
+                                                            (op1[31] == 0 && op2[31] == 1) ? 1 :
+                                                            (op1[31] == 1 && op2[31] == 1) ? ((op1[30:0] > op2[30:0]) ? 0 : 1) :
+                                                            ((op1[30:0] < op2[30:0]) ? 0 : 1);
+                    `RISCV_RV32I_FUNCT3_BLTU        : res = (op1 < op2) ? 1 : 0;
+                    `RISCV_RV32I_FUNCT3_BGEU        : res = (op1 < op2) ? 0 : 1;
                     default: 
                 endcase
             end
@@ -146,12 +213,16 @@ module tinyriscv_cpu_alu (
             // byp - link address
             `RISCV_RV32I_OPCODE_JAL,
             `RISCV_RV32I_OPCODE_JAL_REG     : begin
+                res = op1 + op2;
+                byp = op3;
             end
             // Load upper operations
             // res - result
             // byp - (unused)
             `RISCV_RV32I_OPCODE_LUI,
             `RISCV_RV32I_OPCODE_AUIPC       : begin
+                res = op1 + (op2 << 12);
+                byp = 32'h0000_0000;
             end
             // System operations
             // res - new system register value

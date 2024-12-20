@@ -7,6 +7,7 @@ module tinyriscv_cpu_fetch_unit #(
     // Core signals
     input   logic       cpu_clk,                ///< CPU clock
     input   logic       cpu_resetn,             ///< CPU reset, async, active LOW
+    input   logic       pipe_stall_in,          ///< Pipeline stall input - connect to dmem and imem hreadyin
     // AHB instruction memory interface
     input   logic       imem_m_ahb_hready,
     input   logic       imem_m_ahb_hresp,
@@ -23,15 +24,13 @@ module tinyriscv_cpu_fetch_unit #(
     // Downstream instruction interface
     output  logic[31:0] fetch_pcaddr_out,       ///< Fetch instruction program counter
     output  logic[31:0] fetch_instr_out,        ///< Fetch instruction word
-    output  logic       fetch_spec_out,         ///< Speculative execution flag
-    output  wire       fetch_stall,            ///< Pipeline stall output
-    output  wire       fetch_flush,            ///< Pipeline flush output
+    output  logic[1:0]  fetch_spec_out,         ///< Speculative execution flag and branch prediction
     // Branch resolution interface
-    input   logic       branch_jump,            ///< Unconditional Jump flag, asserts for JALR downstream, forces fetch_flush
-    input   logic[1:0]  branch_res,             ///< Branch result flags, if branch_res[1] != branch_res[0], mispredicted, forces fetch_flush
-    input   logic       branch_upd,             ///< Branch update flag, asserts for BRANCH downstream, updates predictor table
-    input   logic[31:0] branch_addr,            ///< Branch pcaddr - address of the branch/jump instruction
-    input   logic[31:0] branch_jump_pcaddr      ///< Branch/Jump pcaddr - address to set prog_counter to
+    input   logic       branch_jump_in,
+    input   logic[31:0] branch_jump_pcaddr,
+    input   logic       branch_upd,
+    input   logic[31:0] branch_upd_pcaddr,
+    input   logic       branch_upd_res
 );
     // Static assignments
     assign  imem_m_ahb_hwrite = 1'b0;
@@ -39,8 +38,6 @@ module tinyriscv_cpu_fetch_unit #(
     assign  imem_m_ahb_hmastlock = 1'b0;
     //TODO - HPROT should be assigned by processor mode
     assign  imem_m_ahb_hprot = 4'h1;
-    assign  fetch_flush = branch_jump | ((branch_res[0] != branch_res[1]) & branch_upd);
-    assign  fetch_stall = ~imem_m_ahb_hready; // cache wait states will force a pipeline stall, might want to rework this later on
 
     // Internal signals
     logic[31:0]   prog_counter;
@@ -51,109 +48,135 @@ module tinyriscv_cpu_fetch_unit #(
     wire[12:0]  fetch_instr_pl_imm_B = {fetch_instr_pl[31], fetch_instr_pl[7], fet_instr_pl[30:25], fetch_instr_pl[11:8], 1'b0};
     logic[31:0]   fetch_pcaddr_pl;
     logic[2:0]    fetch_instr_invalidate;
+    wire        predict_res;
     
     // AHB address phase controls
     always_ff @( posdege cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_ahb_addr
         if (cpu_resetn) begin
             // Drive the program counter address out onto the instruction memory bus
             // Transactions are always 32-bit, non-sequential, non-bursting operations
-            imem_m_ahb_haddr <= prog_counter;
-            imem_m_ahb_htrans <= `AHB_HTRANS_NONSEQ;
-            imem_m_ahb_hsize <= `AHB_HSIZE_WORD;
-            imem_m_ahb_hburst <= `AHB_NONBURST;
+            imem_m_ahb_haddr    <= prog_counter;
+            imem_m_ahb_htrans   <= `AHB_HTRANS_NONSEQ;
+            imem_m_ahb_hsize    <= `AHB_HSIZE_WORD;
+            imem_m_ahb_hburst   <= `AHB_NONBURST;
         end else begin
-            imem_m_ahb_haddr <= RESET_VECTOR;
-            imem_m_ahb_htrans <= `AHB_HTRANS_IDLE;
-            imem_m_ahb_hsize <= `AHB_HSIZE_BYTE;
-            imem_m_ahb_hburst <= `AHB_NONBURST;
+            imem_m_ahb_haddr    <= RESET_VECTOR;
+            imem_m_ahb_htrans   <= `AHB_HTRANS_IDLE;
+            imem_m_ahb_hsize    <= `AHB_HSIZE_BYTE;
+            imem_m_ahb_hburst   <= `AHB_NONBURST;
         end
     end
 
     // Program counter pipeline
     always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_prog_counter_pl
         if (cpu_resetn) begin
-            if (imem_m_ahb_hready) begin
+            if (~pipe_stall_in) begin
                 // Pipeline registers are inserted to synchronize the program counter
                 // value to the instruction read from the instruction memory. The instruction
                 // lags prog_counter by 2 cycles due to the AHB interface
-                prog_counter_pl[0] <= prog_counter;
-                prog_counter_pl[1] <= prog_counter_pl[0];
-                fetch_pcaddr_pl <= (fetch_instr_invalidate[0]) ? 32'h0000_0000 : prog_counter_pl[1];
+                prog_counter_pl[0]  <= prog_counter;
+                prog_counter_pl[1]  <= prog_counter_pl[0];
+                fetch_pcaddr_pl     <= (fetch_instr_invalidate[0]) ? 32'h0000_0000 : prog_counter_pl[1];
             end
         end else begin
-            prog_counter_pl[0] <= RESET_VECTOR;
-            prog_counter_pl[1] <= RESET_VECTOR;
-            fetch_pcaddr_pl[0] <= RESET_VECTOR;
+            prog_counter_pl[0]  <= RESET_VECTOR;
+            prog_counter_pl[1]  <= RESET_VECTOR;
+            fetch_pcaddr_pl[0]  <= RESET_VECTOR;
         end
     end
 
     // Instruction fetch pipeline
     always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_instr_fetch
         if (cpu_resetn) begin
-            if (imem_m_ahb_hready) begin
+            if (~pipe_stall_in) begin
                 // A Pipeline register was added here to allow for branch prediction
                 // and unconditional jumps to be handled in the fetch unit rather than
                 // downstream in the pipeline. The goal is to reduce the bubble size
                 // when a branch or PC-relative jump occurs
-                fetch_instr_pl <= (fetch_instr_invalidate[0]) ? `RISCV_RV32I_INSTR_NOP : imem_m_ahb_hrdata;
-                fetch_instr_out <= (fetch_instr_invalidate[0]) ? 32'h0000_0000 : fetch_instr_pl[0];
+                fetch_instr_pl      <= (fetch_instr_invalidate[0]) ? `RISCV_RV32I_INSTR_NOP : imem_m_ahb_hrdata;
+                fetch_instr_out     <= (fetch_instr_invalidate[0]) ? 32'h0000_0000 : fetch_instr_pl[0];
             end
         end else begin
-            fetch_instr_pl <= `RISCV_RV32I_INSTR_NOP;
-            fetch_instr_out <= `RISCV_RV32I_INSTR_NOP;
+            fetch_instr_pl      <= `RISCV_RV32I_INSTR_NOP;
+            fetch_instr_out     <= `RISCV_RV32I_INSTR_NOP;
         end
     end
 
     // Program counter logic
     always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_fetch_unit_prog_counter
         if (cpu_resetn) begin
-            if(imem_m_ahb_hready) begin
-                if (fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_JAL) begin
+            if(~pipe_stall_in) begin
+                if (branch_jump_in) begin
+                    prog_counter            <= branch_jump_pcaddr;
+                    fetch_spec_out          <= 2'b00;
+                    fetch_instr_invalidate  <= 3'h7;
+                end else if (fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_JAL) begin
                     // For unconditional jump, the offset is already known, so the new program
                     // counter address can be calculated and set here. fetch_instr_invalidate
                     // is set to invalidate the next 3 instructions to let the upstream catch up.
-                    prog_counter <= fetch_pcaddr_pl + fetch_instr_pl_imm_J;
-                    fetch_spec_out <= 0;
+                    prog_counter            <= fetch_pcaddr_pl + fetch_instr_pl_imm_J;
+                    fetch_spec_out          <= 2'b00;
                     // fetch_instr_invalidate is set to 6 here to let the JAL into the pipeline.
                     // This is so the link address makes it to rd properly.
-                    fetch_instr_invalidate <= 3'h6;
+                    fetch_instr_invalidate  <= 3'h6;
                 end
-                else if(fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_BRANCH && predict_res == 1) begin
-                    // For branches, if the branch is predicted to be taken, the same thing as
-                    // an unconditional jump occurs, except the speculative flag is also set
-                    // to mark that this was a branch instruction and all following instructions
-                    // are being speculatively executed until it is resolved.
-                    prog_counter <= fetch_pcaddr_pl + fetch_instr_pl_imm_B;
-                    fetch_spec_out <= 1;
-                    fetch_instr_invalidate <= 3'h7;
+                else if(fetch_instr_pl[6:0] == `RISCV_RV32I_OPCODE_BRANCH) begin
+                    // For branches, we raise the speculative execution state. Further downstream,
+                    // if the execution unit detects a mismatch between bit[0] of fetch_spec_out
+                    // and the actual branch result, the pipeline gets flushed and the branch will
+                    // be re-done in the other direction.
+                    if (predict_res) begin
+                        prog_counter            <= fetch_pcaddr_pl + fetch_instr_pl_imm_B;
+                        fetch_spec_out          <= 2'b11;
+                        fetch_instr_invalidate  <= 3'h7;
+                    end else begin
+                        prog_counter            <= prog_counter + 4;
+                        fetch_spec_out          <= 2'b10;
+                        fetch_instr_invalidate  <= fetch_instr_invalidate >> 1;
+                    end
+                    
                 end else begin
                     // In the normal case, the program counter increments to the next word, the
                     // invalidate bits shift right, and the speculative flag is set low.
-                    prog_counter <= prog_counter + 4;
-                    fetch_spec_out <= 0;
-                    fetch_instr_invalidate <= fetch_instr_invalidate >> 1;
+                    prog_counter            <= prog_counter + 4;
+                    fetch_spec_out          <= 2'b00;
+                    fetch_instr_invalidate  <= fetch_instr_invalidate >> 1;
                 end
             end
         end else begin
-            
+            prog_counter            <= RESET_VECTOR;
+            fetch_spec_out          <= 2'b00;
+            fetch_instr_invalidate  <= 3'h7;
         end
     end
     
+    tinyriscv_cpu_fetch_branch_predictor #(
+        .BRANCH_DEPTH(8)
+    ) inst_tinyriscv_cpu_fetch_branch_predictor (
+        .cpu_clk            ( cpu_clk ),
+        .cpu_resetn         ( cpu_resetn ),
+        .predict_addr       ( fetch_pcaddr_pl ),
+        .predict_res        ( predict_res ),
+        .branch_upd         ( branch_upd ),
+        .branch_upd_addr    ( branch_upd_addr ),
+        .branch_upd_res     ( branch_upd_res )
+    );
+
 endmodule
 
 module tinyriscv_cpu_fetch_branch_predictor #(
     parameter BRANCH_DEPTH = 8;
 ) (
     // Global signals
-    input   wire        cpu_clk,
-    input   wire        cpu_resetn,
+    input   logic        cpu_clk,
+    input   logic        cpu_resetn,
     // Prediction (read) interface
-    input   wire[31:0]  predict_addr,
-    output  wire        predict_res,
+    input   logic[31:0]  predict_addr,
+    output  logic        predict_res,
     // Update (write) interface
-    input   wire        branch_upd,
-    input   wire[31:0]  branch_upd_addr,
-    input   wire        branch_upd_res
+    input   logic        branch_upd,
+    input   logic[31:0]  branch_upd_addr,
+    input   logic        branch_upd_res
 );
     // Internal Signals
     logic[31:0]   predict_addr_table[BRANCH_DEPTH-1:0];
@@ -193,7 +216,7 @@ module tinyriscv_cpu_fetch_branch_predictor #(
                     predict_res_table[i + 1] <= predict_res_table[i];
                 end
                 predict_addr_table[0] <= branch_upd_addr;
-                predict_res_table[0] <= 2'b01;
+                predict_res_table[0] <= (branch_upd_res == 1) ? 2'b10 : 2'b01;
             end
         end else begin
             for(i = 0; i < BRANCH_DEPTH; i = i + 1) begin
