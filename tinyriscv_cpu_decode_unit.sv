@@ -240,6 +240,8 @@ module tinyriscv_cpu_register_file (
     input   logic[4:0]  rd2_sel,
     input   logic[31:0] rd2_data,
     input   logic       rd2_wren
+    // System Register Input/Outputs
+    // TODO - system register lines
 );
     integer i;
     logic[31:0]   core_registers[31:0]        ///< page 0x000 - core registers
@@ -268,14 +270,15 @@ module tinyriscv_cpu_register_file (
             if(rd1_wren) begin
                 case(rd1_sel[11:5])
                     // TODO - system register pages
-                    7'h00:  core_registers[rd1_sel[4:0]] <= rd1_data;
+                    7'h00:  core_registers[rd1_sel[4:0]] <= (rd1_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd1_data;
                     default:    // do nothing
                 endcase
             end
             if(rd2_wren && rd1_sel[11:5] != 7'h00) begin
-                core_registers[rd2_sel[4:0]] <= rd2_data;
+                core_registers[rd2_sel[4:0]] <= (rd2_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd2_data;
             end
         end else begin
+            // TODO - system register pages
             for(i = 0; i < 32; i = i + 1) begin
                 core_registers[i]   <= 32'h0000_0000;
             end

@@ -49,6 +49,11 @@ module tinyriscv_cpu_memory_unit (
                 pl_mem_res[0]       <= exec_res_in;
                 pl_mem_byp[1]       <= pl_mem_byp[0];
                 pl_mem_byp[0]       <= exec_byp_in;
+
+                mem_pcaddr_out      <= pl_mem_pcaddr[1];
+                mem_instr_out       <= pl_mem_instr[1];
+                mem_res_out         <= (pl_mem_instr[1][6:0] == `RISCV_RV32I_OPCODE_LOAD) ? pl_mem_read_word : pl_mem_res[1];
+                mem_byp_out         <= pl_mem_byp[1];
             end
         end else begin
             pl_mem_pcaddr[1]    <= 32'h0000_0000;
@@ -59,6 +64,11 @@ module tinyriscv_cpu_memory_unit (
             pl_mem_res[0]       <= 32'h0000_0000;
             pl_mem_byp[1]       <= 32'h0000_0000;
             pl_mem_byp[0]       <= 32'h0000_0000;
+
+            mem_pcaddr_out      <= 32'h0000_0000;
+            mem_instr_out       <= `RISCV_RV32I_INSTR_NOP;
+            mem_res_out         <= 32'h0000_0000;
+            mem_byp_out         <= 32'h0000_0000;
         end
     end
 

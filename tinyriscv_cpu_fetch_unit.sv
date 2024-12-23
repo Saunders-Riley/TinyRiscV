@@ -227,3 +227,89 @@ module tinyriscv_cpu_fetch_branch_predictor #(
     end
     
 endmodule
+
+module __tb_tinyriscv_cpu_fetch_unit();
+
+    logic       cpu_clk;
+    logic       cpu_resetn;
+    logic       pipe_stall_in;
+    logic       imem_m_ahb_hready;
+    logic       imem_m_ahb_hresp;
+    logic       imem_m_ahb_haddr;
+    logic       imem_m_ahb_hwrite;
+    logic       imem_m_ahb_hwstrb;
+    logic       imem_m_ahb_htrans;
+    logic       imem_m_ahb_hsize;
+    logic       imem_m_ahb_hburst;
+    logic       imem_m_ahb_hprot;
+    logic       imem_m_ahb_hmastlock;
+    logic       imem_m_ahb_hwdata;
+    logic       imem_m_ahb_hrdata;
+    logic       fetch_pcaddr_out;
+    logic       fetch_instr_out;
+    logic       fetch_spec_out;
+    logic       branch_jump_in;
+    logic       branch_jump_pcaddr;
+    logic       branch_upd;
+    logic       branch_upd_pcaddr;
+    logic       branch_upd_res;
+
+    ahb_sync_sram #(
+        .W_DATA(32),
+        .W_ADDR(32),
+        .DEPTH(1 << 11),
+        .HAS_WRITE_BUFFER(1),
+        .USE_1R1W(0),
+        .PRELOAD_FILE("")
+    ) inst_ahb_sync_sram (
+        // Globals
+        .clk                ( cpu_clk ),
+        .rst_n              ( cpu_resetn ),
+
+        // AHB lite slave interface
+        .ahbls_hready_resp  ( imem_m_ahb_hready ),
+        .ahbls_hready       ( 1'b1 ),
+        .ahbls_hresp        (  ),
+        .ahbls_haddr        ( imem_m_ahb_haddr ),
+        .ahbls_hwrite       ( imem_m_ahb_hwrite ),
+        .ahbls_htrans       ( imem_m_ahb_htrans ),
+        .ahbls_hsize        ( imem_m_ahb_hsize ),
+        .ahbls_hburst       ( imem_m_ahb_hburst ),
+        .ahbls_hprot        ( imem_m_ahb_hprot ),
+        .ahbls_hmastlock    ( imem_m_ahb_hmastlock ),
+        .ahbls_hwdata       ( imem_m_ahb_hwdata ),
+        .ahbls_hrdata       ( imem_m_ahb_hrdata )
+    );
+
+    tinyriscv_cpu_fetch_unit #(
+        .RESET_VECTOR(`TINYRISCV_RESET_VECTOR)
+    ) inst_tinyriscv_cpu_fetch_unit (
+        // Core signals
+        .cpu_clk                ( cpu_clk ),
+        .cpu_resetn             ( cpu_resetn ),
+        .pipe_stall_in          ( pipe_stall_in ),
+        // AHB instruction memory interface
+        .imem_m_ahb_hready      ( imem_m_ahb_hready ),
+        .imem_m_ahb_hresp       ( imem_m_ahb_hresp ),
+        .imem_m_ahb_haddr       ( imem_m_ahb_haddr ),
+        .imem_m_ahb_hwrite      ( imem_m_ahb_hwrite ),
+        .imem_m_ahb_hwstrb      ( imem_m_ahb_hwstrb ),
+        .imem_m_ahb_htrans      ( imem_m_ahb_htrans ),
+        .imem_m_ahb_hsize       ( imem_m_ahb_hsize ),
+        .imem_m_ahb_hburst      ( imem_m_ahb_hburst ),
+        .imem_m_ahb_hprot       ( imem_m_ahb_hprot ),
+        .imem_m_ahb_hmastlock   ( imem_m_ahb_hmastlock ),
+        .imem_m_ahb_hwdata      ( imem_m_ahb_hwdata ),
+        .imem_m_ahb_hrdata      ( imem_m_ahb_hrdata ),
+        // Downstream instruction interface
+        .fetch_pcaddr_out       ( fetch_pcaddr_out ),
+        .fetch_instr_out        ( fetch_instr_out ),
+        .fetch_spec_out         ( fetch_spec_out ),
+        // Branch resolution interface
+        .branch_jump_in         ( branch_jump_in ),
+        .branch_jump_pcaddr     ( branch_jump_pcaddr ),
+        .branch_upd             ( branch_upd ),
+        .branch_upd_pcaddr      ( branch_upd_pcaddr ),
+        .branch_upd_res         ( branch_upd_res )
+);
+endmodule
