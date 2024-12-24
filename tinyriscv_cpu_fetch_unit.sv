@@ -311,5 +311,5 @@ module __tb_tinyriscv_cpu_fetch_unit();
         .branch_upd             ( branch_upd ),
         .branch_upd_pcaddr      ( branch_upd_pcaddr ),
         .branch_upd_res         ( branch_upd_res )
-);
+    );
 endmodule

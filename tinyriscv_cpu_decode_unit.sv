@@ -224,7 +224,13 @@ module tinyriscv_cpu_decode_unit (
 
 endmodule
 
-module tinyriscv_cpu_register_file (
+module tinyriscv_cpu_register_file #(
+    parameter MISA_DEFAULT = 32'h0000_0000,
+    parameter MVENDORID_DEFAULT = 32'h0000_0000,
+    parameter MARCHID_DEFAULT = 32'h0000_0000,
+    parameter MIMPID_DEFAULT = 32'h0000_0000,
+    parameter MHARTID_DEFAULT = 32'h0000_0000
+) (
     // Core signals
     input   logic       cpu_clk,
     input   logic       cpu_resetn,
@@ -242,14 +248,51 @@ module tinyriscv_cpu_register_file (
     input   logic       rd2_wren
     // System Register Input/Outputs
     // TODO - system register lines
+    // Exception handling
+    input   logic[31:0] mepc_in,
+    input   logic[31:0] mcause_in,
+    input   logic[31:0] mtval_in,
+    input   logic[31:0] mip_in,
+    input   logic[31:0] mtinst_in,
+    input   logic[31:0] mtval2_in,
+    input   logic       exc_int_in,
+    // NMI handling
+    input   logic[31:0] mnepc_in,
+    input   logic[31:0] mncause_in,
+    input   logic[31:0] mnstatus_in,
+    input   logic       nmi_in,
+    // page 0x300 - machine status registers
+    output  logic[63:0] mstatus_out,
+    output  logic[31:0] medeleg_out,
+    output  logic[31:0] mideleg_out,
+    output  logic[31:0] mie_out,
+    output  logic[31:0] mtvec_out,
+    output  logic[31:0] mcounteren_out,
+    // page 0xB00 - timer counter registers
+    input   logic[63:0] mcycle_in,
+    input   logic[63:0] minstret_in,
 );
     integer i;
-    logic[31:0]   core_registers[31:0]        ///< page 0x000 - core registers
+    logic[31:0]     core_registers[31:0];       ///< page 0x000 - core registers
+    logic[31:0]     m_id_registers[21:17];      ///< page 0xF00 (0x78) [R/O] - machine id registers
+    m_id_registers[17]  = MVENDORID_DEFAULT;
+    m_id_registers[18]  = MARCHID_DEFAULT;
+    m_id_registers[19]  = MIMPID_DEFAULT;
+    m_id_registers[20]  = MHARTID_DEFAULT;
+    m_id_registers[21]  = 32'hFFFF_FFFF;
+    logic[31:0]     m_status_registers[6:0];    ///< page 0x300 (0x18) [R/W] - machine status registers
+    logic[31:0]     m_statush_registers[18:16]; ///< page 0x300 (0x18) [R/W] - machine status registers (high bits)
+    logic[31:0]     m_trap_registers[4:0];      ///< page 0x340 (0x1A) [R/W] - machine trap handling registers
+    logic[31:0]     m_trap_registers_2[11:10];  ///< page 0x340 (0X1A) [R/W] - machine trap handling registers 2
+    logic[31:0]     m_nmi_registers[4:0];       ///< page 0x740 (0x3A) [R/W] - machine NMI handling registers
 
     // Source Register 1 read
     always_comb begin : proc_tinyriscv_cpu_register_file_rs1_read
         case(rs1_sel[11:5])
             // TODO - system register pages
+            7'h78:      rs1_data = m_id_registers[rs1_sel[4:0]];
+            7'h18:      rs1_data = (rs1_sel[4]) ? m_statush_registers[rs1_sel[3:0]] : m_status_registers[rs1_sel[3:0]];
+            7'h1A:      rs1_data = (rs1_sel > 9) ? m_trap_registers_2[rs1_sel[3:0]] : m_trap_registers[rs1_sel[3:0]];
             7'h00:      rs1_data = core_registers[rs1_sel[4:0]];
             default:    rs1_data = 32'h0000_0000;
         endcase
@@ -267,21 +310,44 @@ module tinyriscv_cpu_register_file (
     // Destination Register writes
     always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_register_file_write
         if(cpu_resetn) begin
+            // Destination Register 1 write
             if(rd1_wren) begin
                 case(rd1_sel[11:5])
                     // TODO - system register pages
+                    7'h18:  begin
+                        if(rd1_sel[4]) m_statush_registers[rd1_sel[3:0]] <= rd1_data;
+                        else m_status_registers[rd1_sel[3:0]] <= rd1_data;
+                    end
+                    7'h1A:  begin
+                        if(rd1_sel > 9) m_trap_registers_2[rd1_sel[3:0]] <= rd1_data;
+                        else m_trap_registers[rd1_sel[3:0]] <= rd1_data;
+                    end
                     7'h00:  core_registers[rd1_sel[4:0]] <= (rd1_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd1_data;
                     default:    // do nothing
                 endcase
             end
+            // Destination register 2 write
             if(rd2_wren && rd1_sel[11:5] != 7'h00) begin
                 core_registers[rd2_sel[4:0]] <= (rd2_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd2_data;
             end
+            // Exception/Interrupt register latch
+            if(exc_int_in) begin
+                m_trap_registers[1]     <= mepc_in;
+                m_trap_registers[2]     <= mcause_in;
+                m_trap_registers[3]     <= mtval_in;
+                m_trap_registers[4]     <= mip_in;
+                m_trap_registers_2[10]  <= mtinst_in;
+                m_trap_registers_2[11]  <= mtval2_in;
+            end
+            // Non-Maskable Interrupt register latch
+            if(nmi_in) begin
+                m_nmi_registers[1]      <= mnepc_in;
+                m_nmi_registers[2]      <= mncause_in;
+                m_nmi_registers[4]      <= mnstatus_in; // TODO - is this an input?
+            end
         end else begin
             // TODO - system register pages
-            for(i = 0; i < 32; i = i + 1) begin
-                core_registers[i]   <= 32'h0000_0000;
-            end
+            for(i = 0; i < 32; i = i + 1) core_registers[i] <= 32'h0000_0000;
         end
     end
 
