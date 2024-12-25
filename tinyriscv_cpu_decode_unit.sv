@@ -33,6 +33,38 @@ module tinyriscv_cpu_decode_unit (
     input   logic[4:0]  wb_rd2_sel,
     input   logic[31:0] wb_rd2_data,
     input   logic       wb_rd2_wren,
+    // System Register Input/Outputs
+    // TODO - system register lines
+    // system status and control
+    output  logic[31:0] mstatus_out,
+    output  logic[31:0] misa_out,
+    output  logic[31:0] medeleg_out,
+    output  logic[31:0] mideleg_out,
+    output  logic[31:0] mie_out,
+    output  logic[31:0] mtvec_out,
+    // machine trap/interrupt handling
+    input   logic       exc_int_in,
+    input   logic[31:0] exc_pcaddr_in,
+    input   logic[31:0] exc_cause_in,
+    input   logic[31:0] exc_val_in,
+    input   logic[31:0] exc_ip_in,
+    input   logic[31:0] exc_tinst_in,
+    input   logic[31:0] exc_val2_in,
+    // non-maskable interrupt handling
+    input   logic       nmi_in,
+    input   logic[31:0] nmi_pcaddr_in,
+    input   logic[31:0] nmi_cause_in,
+    input   logic[31:0] nmi_status_in,
+    // hardware performance monitor
+    input   logic[63:0] mcycle_in,
+    input   logic[63:0] minstret_in,
+    input   logic[(64*30)-1:0] mhpmcounter_in,
+    output  logic[(64*30)-1:0] mhpmevent_out,
+    output  logic[31:0] mcounteren_out,
+    output  logic[31:0] mcountinhibit_out,
+    output  logic[31:0] mhpm_wval,
+    output  logic[7:0]  mhpm_wsel,
+    output  logic       mhpm_wren,
 );
 
     wire[31:0]      pl_fetch_instr      = fetch_instr_in;
@@ -248,51 +280,63 @@ module tinyriscv_cpu_register_file #(
     input   logic       rd2_wren
     // System Register Input/Outputs
     // TODO - system register lines
-    // Exception handling
-    input   logic[31:0] mepc_in,
-    input   logic[31:0] mcause_in,
-    input   logic[31:0] mtval_in,
-    input   logic[31:0] mip_in,
-    input   logic[31:0] mtinst_in,
-    input   logic[31:0] mtval2_in,
-    input   logic       exc_int_in,
-    // NMI handling
-    input   logic[31:0] mnepc_in,
-    input   logic[31:0] mncause_in,
-    input   logic[31:0] mnstatus_in,
-    input   logic       nmi_in,
-    // page 0x300 - machine status registers
-    output  logic[63:0] mstatus_out,
+    // system status and control
+    output  logic[31:0] mstatus_out,
+    output  logic[31:0] misa_out,
     output  logic[31:0] medeleg_out,
     output  logic[31:0] mideleg_out,
     output  logic[31:0] mie_out,
     output  logic[31:0] mtvec_out,
-    output  logic[31:0] mcounteren_out,
-    // page 0xB00 - timer counter registers
+    // machine trap/interrupt handling
+    input   logic       exc_int_in,
+    input   logic[31:0] exc_pcaddr_in,
+    input   logic[31:0] exc_cause_in,
+    input   logic[31:0] exc_val_in,
+    input   logic[31:0] exc_ip_in,
+    input   logic[31:0] exc_tinst_in,
+    input   logic[31:0] exc_val2_in,
+    // non-maskable-interrupt handling
+    input   logic       nmi_in,
+    input   logic[31:0] nmi_pcaddr_in,
+    input   logic[31:0] nmi_cause_in,
+    input   logic[31:0] nmi_status_in,
+    // hardware performance monitor
     input   logic[63:0] mcycle_in,
     input   logic[63:0] minstret_in,
+    input   logic[(64*30)-1:0] mhpmcounter_in,
+    output  logic[(64*30)-1:0] mhpmevent_out,
+    output  logic[31:0] mcounteren_out,
+    output  logic[31:0] mcountinhibit_out,
+    output  logic[31:0] mhpm_wval,
+    output  logic[8:0]  mhpm_wsel,
+    output  logic       mhpm_wren
 );
     integer i;
     logic[31:0]     core_registers[31:0];       ///< page 0x000 - core registers
-    logic[31:0]     m_id_registers[21:17];      ///< page 0xF00 (0x78) [R/O] - machine id registers
-    m_id_registers[17]  = MVENDORID_DEFAULT;
-    m_id_registers[18]  = MARCHID_DEFAULT;
-    m_id_registers[19]  = MIMPID_DEFAULT;
-    m_id_registers[20]  = MHARTID_DEFAULT;
-    m_id_registers[21]  = 32'hFFFF_FFFF;
-    logic[31:0]     m_status_registers[6:0];    ///< page 0x300 (0x18) [R/W] - machine status registers
-    logic[31:0]     m_statush_registers[18:16]; ///< page 0x300 (0x18) [R/W] - machine status registers (high bits)
-    logic[31:0]     m_trap_registers[4:0];      ///< page 0x340 (0x1A) [R/W] - machine trap handling registers
-    logic[31:0]     m_trap_registers_2[11:10];  ///< page 0x340 (0X1A) [R/W] - machine trap handling registers 2
-    logic[31:0]     m_nmi_registers[4:0];       ///< page 0x740 (0x3A) [R/W] - machine NMI handling registers
-
+    logic[31:0]     mid_registers[21:17];       ///< page 0xF00 (0x78) [R/O] - machine ID registers
+    mid_registers[17]   = MISA_DEFAULT;
+    mid_registers[18]   = MVENDORID_DEFAULT;
+    mid_registers[19]   = MARCHID_DEFAULT;
+    mid_registers[20]   = MIMPID_DEFAULT;
+    mid_registers[21]   = MHARTID_DEFAULT;
+    logic[31:0]     mstatus_registers[6:0];     ///< page 0x300 (0x18) [R/W] - machine status registers
+    mstatus_out         = mstatus_registers[0];
+    misa_out            = mstatus_registers[1];
+    medeleg_out         = mstatus_registers[2];
+    mideleg_out         = mstatus_registers[3];
+    mie_out             = mstatus_registers[4];
+    mtvec_out           = mstatus_registers[5];
+    mcounteren_out      = mstatus_registers[6];
+    logic[31:0]     mtrap_registers[11:0];      ///< page 0x340 (0x1A) [R/W] - machine trap handling registers
+    logic[31:0]     mnmi_registers[4:0];        ///< page 0x740 (0X3A) [R/W] - machine nmi handling registers
     // Source Register 1 read
     always_comb begin : proc_tinyriscv_cpu_register_file_rs1_read
         case(rs1_sel[11:5])
             // TODO - system register pages
-            7'h78:      rs1_data = m_id_registers[rs1_sel[4:0]];
-            7'h18:      rs1_data = (rs1_sel[4]) ? m_statush_registers[rs1_sel[3:0]] : m_status_registers[rs1_sel[3:0]];
-            7'h1A:      rs1_data = (rs1_sel > 9) ? m_trap_registers_2[rs1_sel[3:0]] : m_trap_registers[rs1_sel[3:0]];
+            7'h78:      rs1_data = mid_registers[rs1_sel[4:0]];
+            7'h18:      rs1_data = mstatus_registers[rs1_sel[4:0]];
+            7'h1A:      rs1_data = mtrap_registers[rs1_sel[4:0]];
+            7'h3A:      rs1_data = mnmi_registers[rs1_sel[4:0]];
             7'h00:      rs1_data = core_registers[rs1_sel[4:0]];
             default:    rs1_data = 32'h0000_0000;
         endcase
@@ -311,39 +355,29 @@ module tinyriscv_cpu_register_file #(
     always_ff @( posedge cpu_clk, negedge cpu_resetn ) begin : proc_tinyriscv_cpu_register_file_write
         if(cpu_resetn) begin
             // Destination Register 1 write
-            if(rd1_wren) begin
+            if (rd1_wren) begin
                 case(rd1_sel[11:5])
                     // TODO - system register pages
-                    7'h18:  begin
-                        if(rd1_sel[4]) m_statush_registers[rd1_sel[3:0]] <= rd1_data;
-                        else m_status_registers[rd1_sel[3:0]] <= rd1_data;
-                    end
-                    7'h1A:  begin
-                        if(rd1_sel > 9) m_trap_registers_2[rd1_sel[3:0]] <= rd1_data;
-                        else m_trap_registers[rd1_sel[3:0]] <= rd1_data;
-                    end
                     7'h00:  core_registers[rd1_sel[4:0]] <= (rd1_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd1_data;
                     default:    // do nothing
                 endcase
             end
             // Destination register 2 write
-            if(rd2_wren && rd1_sel[11:5] != 7'h00) begin
+            if (rd2_wren && rd1_sel[11:5] != 7'h00) begin
                 core_registers[rd2_sel[4:0]] <= (rd2_sel[4:0] = 5'h00) ? 32'h0000_0000 : rd2_data;
             end
-            // Exception/Interrupt register latch
-            if(exc_int_in) begin
-                m_trap_registers[1]     <= mepc_in;
-                m_trap_registers[2]     <= mcause_in;
-                m_trap_registers[3]     <= mtval_in;
-                m_trap_registers[4]     <= mip_in;
-                m_trap_registers_2[10]  <= mtinst_in;
-                m_trap_registers_2[11]  <= mtval2_in;
+            if (exc_int_in) begin
+                mtrap_registers[1]  <= exc_pcaddr_in;
+                mtrap_registers[2]  <= exc_cause_in;
+                mtrap_registers[3]  <= exc_val_in;
+                mtrap_registers[4]  <= exc_ip_in;
+                mtrap_registers[5]  <= exc_tinst_in;
+                mtrap_registers[6]  <= exc_val2_in;
             end
-            // Non-Maskable Interrupt register latch
-            if(nmi_in) begin
-                m_nmi_registers[1]      <= mnepc_in;
-                m_nmi_registers[2]      <= mncause_in;
-                m_nmi_registers[4]      <= mnstatus_in; // TODO - is this an input?
+            if (nmi_in) begin
+                mnmi_registers[1]   <= nmi_pcaddr_in;
+                mnmi_registers[2]   <= nmi_cause_in;
+                mnmi_registers[3]   <= nmi_status_in;
             end
         end else begin
             // TODO - system register pages
