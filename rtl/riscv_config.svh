@@ -1,0 +1,4 @@
+`ifndef RISCV_CONFIG_SVH
+`define RISCV_CONFIG_SVH
+
+`endif // RISCV_CONFIG_SVH
